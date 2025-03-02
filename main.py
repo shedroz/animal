@@ -106,7 +106,6 @@ def geocoder(latitude, longitude):
     else:
         return "Ошибка при обращении к API."
 
-
 def run():
     update_id = get_updates()[-1][
         "update_id"
