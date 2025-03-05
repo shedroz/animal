@@ -15,41 +15,38 @@ mydb = mysql.connector.connect(
 
 mycursor = mydb.cursor()
 
-# Выполнение SQL-запроса для извлечения lon и lat
-mycursor.execute("SELECT lon, lat FROM shelters")
+# Выполнение SQL-запроса для извлечения name, lon и lat
+mycursor.execute("SELECT title, lon, lat, image_path FROM shelters")
 
 # Получение всех строк результата
 result = mycursor.fetchall()
 
-# Преобразование результата в список кортежей
-list_border_coord = [(lon, lat) for lon, lat in result]
+# Преобразование результата в список кортежей (name, lon, lat)
+list_shelters = [(name, lon, lat, image_path) for name, lon, lat, image_path in result]
 
 # Закрытие курсора и соединения
 mycursor.close()
 mydb.close()
 
-# Вывод результата
-print(list_border_coord)
-
 
 def distance_calculation(start_coord):
     list_dist = []
-    for bord_coord in list_border_coord:
-
+    for shelter in list_shelters:
         # Для расчета расстояния используем функцию GD([1 координаты точки],[2 координаты точки].[единица измерения расстояния])
-        dist = GD(start_coord, bord_coord).km
-
-        # Добовляем в список результат
+        dist = GD(start_coord, (shelter[1], shelter[2])).km
+        # Добавляем в список результат
         list_dist.append(dist)
-
     # Возвращаем минимальную дистанцию из списка
     return min(list_dist)
 
 
-# mycursor.execute("SELECT * FROM shelters")
-# myresult = mycursor.fetchone()
-
-# print(myresult)
+def send_photo(chat_id, photo_path, caption=None):
+    with open(photo_path, "rb") as photo_file:
+        files = {"photo": photo_file}
+        data = {"chat_id": chat_id}
+        if caption:
+            data["caption"] = caption
+        requests.post(f"{URL}{TOKEN}/sendPhoto", files=files, data=data)
 
 
 def get_updates(offset=0):
@@ -60,7 +57,6 @@ def get_updates(offset=0):
 def reply_keyboard(chat_id, text):
     reply_markup = {
         "keyboard": [
-            ["Привет", "Hello"],
             [{"request_location": True, "text": "Где я нахожусь"}],
         ],
         "resize_keyboard": True,
@@ -75,8 +71,15 @@ def send_message(chat_id, text):
 
 
 def check_message(chat_id, message):
-    if message.lower() in ["привет", "hello"]:
-        send_message(chat_id, "Привет :)")
+    if message.lower() == "/start":
+        welcome_message = (
+            "Привет! 🐾\n\n"
+            "Я — твой помощник в поиске ближайшего приюта для животных. "
+            "Просто отправь мне свою геопозицию, и я найду приют, который находится ближе всего к тебе. "
+            "Там ты сможешь найти пушистых друзей, которые ждут своего хозяина!"
+        )
+        send_message(chat_id, welcome_message)
+        reply_keyboard(chat_id, "Отправь свою геопозицию, чтобы найти ближайший приют.")
     else:
         reply_keyboard(chat_id, "Я не понимаю тебя :(")
 
@@ -91,48 +94,81 @@ def geocoder(latitude, longitude):
 
     if response.status_code == 200:
         address = response.json()
+
         # Извлекаем улицу и номер дома
         street = address.get("address", {}).get("road", "")
         house_number = address.get("address", {}).get("house_number", "")
 
+        # Извлекаем долготу и широту
+        latitude = round(float(address.get("lat", 0)), 6)
+        longitude = round(float(address.get("lon", 0)), 6)
+
         if street and house_number:
-            return f"Твое местоположение: {street}, {house_number}"
+            return f"Твое местоположение: {street}, {house_number}. Широта: {latitude}, Долгота: {longitude}"
         elif street:
-            return f"Улица: {street}"
+            return f"Улица: {street}. Широта: {latitude}, Долгота: {longitude}"
         elif house_number:
-            return f"Дом: {house_number}"
+            return f"Дом: {house_number}. Широта: {latitude}, Долгота: {longitude}"
         else:
             return "Улица и дом не найдены."
     else:
         return "Ошибка при обращении к API."
 
+
+def find_nearest_shelter(user_coord):
+    min_distance = float("inf")
+    nearest_shelter = None
+
+    for shelter in list_shelters:
+        distance = GD(user_coord, (shelter[1], shelter[2])).km
+        if distance < min_distance:
+            min_distance = distance
+            nearest_shelter = shelter
+
+    return nearest_shelter, min_distance
+
+
 def run():
-    update_id = get_updates()[-1][
-        "update_id"
-    ]  # Присваиваем ID последнего отправленного сообщения боту
+    update_id = get_updates()[-1]["update_id"]
     while True:
         time.sleep(2)
-        messages = get_updates(update_id)  # Получаем обновления
+        messages = get_updates(update_id)
         for message in messages:
-            # Если в обновлении есть ID больше чем ID последнего сообщения, значит пришло новое сообщение
             if update_id < message["update_id"]:
-                update_id = message[
-                    "update_id"
-                ]  # Присваиваем ID последнего отправленного сообщения боту
-                if user_message := message["message"].get(
-                    "text"
-                ):  # Проверим, есть ли текст в сообщении
-                    check_message(
-                        message["message"]["chat"]["id"], user_message
-                    )  # Отвечаем
-                if user_location := message["message"].get(
-                    "location"
-                ):  # Проверим, если ли location в сообщении
+                update_id = message["update_id"]
+                if user_message := message["message"].get("text"):
+                    check_message(message["message"]["chat"]["id"], user_message)
+                if user_location := message["message"].get("location"):
                     latitude = user_location["latitude"]
                     longitude = user_location["longitude"]
-                    send_message(
-                        message["message"]["chat"]["id"], geocoder(latitude, longitude)
+                    user_coord = (latitude, longitude)
+
+                    # Находим ближайший приют и расстояние до него
+                    nearest_shelter, distance = find_nearest_shelter(user_coord)
+
+                    # Формируем текстовый ответ
+                    response = (
+                        f"Ближайший приют: {nearest_shelter[0]}\n"
+                        f"Координаты: {nearest_shelter[1]}, {nearest_shelter[2]}\n"
+                        f"Расстояние до него: {round(distance, 2)} км."
                     )
+
+                    # Отправляем изображение приюта
+                    if nearest_shelter[3]:  # Проверяем, есть ли путь к изображению
+                        try:
+                            send_photo(
+                                message["message"]["chat"]["id"],
+                                nearest_shelter[3],
+                                caption=response,
+                            )
+                        except FileNotFoundError:
+                            send_message(
+                                message["message"]["chat"]["id"],
+                                "Изображение приюта не найдено.",
+                            )
+                    else:
+                        send_message(message["message"]["chat"]["id"], response)
+
 
 if __name__ == "__main__":
     run()
