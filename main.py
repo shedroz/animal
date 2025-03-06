@@ -15,14 +15,14 @@ mydb = mysql.connector.connect(
 
 mycursor = mydb.cursor()
 
-# Выполнение SQL-запроса для извлечения name, lon и lat
-mycursor.execute("SELECT title, lon, lat, image_path FROM shelters")
+# Выполнение SQL-запроса для извлечения данных
+mycursor.execute("SELECT title, lon, lat, image_path, street, house, body, work_time FROM shelters")
 
 # Получение всех строк результата
 result = mycursor.fetchall()
 
-# Преобразование результата в список кортежей (name, lon, lat)
-list_shelters = [(name, lon, lat, image_path) for name, lon, lat, image_path in result]
+# Преобразование результата в список кортежей
+list_shelters = [(name, lon, lat, image_path, street, house, body, work_time) for name, lon, lat, image_path, street, house, body, work_time in result]
 
 # Закрытие курсора и соединения
 mycursor.close()
@@ -32,11 +32,8 @@ mydb.close()
 def distance_calculation(start_coord):
     list_dist = []
     for shelter in list_shelters:
-        # Для расчета расстояния используем функцию GD([1 координаты точки],[2 координаты точки].[единица измерения расстояния])
         dist = GD(start_coord, (shelter[1], shelter[2])).km
-        # Добавляем в список результат
         list_dist.append(dist)
-    # Возвращаем минимальную дистанцию из списка
     return min(list_dist)
 
 
@@ -57,7 +54,7 @@ def get_updates(offset=0):
 def reply_keyboard(chat_id, text):
     reply_markup = {
         "keyboard": [
-            [{"request_location": True, "text": "Где я нахожусь"}],
+            [{"request_location": True, "text": "Моя геопозиция"}],
         ],
         "resize_keyboard": True,
         "one_time_keyboard": True,
@@ -79,7 +76,6 @@ def check_message(chat_id, message):
             "Там ты сможешь найти пушистых друзей, которые ждут своего хозяина!"
         )
         send_message(chat_id, welcome_message)
-        reply_keyboard(chat_id, "Отправь свою геопозицию, чтобы найти ближайший приют.")
     else:
         reply_keyboard(chat_id, "Я не понимаю тебя :(")
 
@@ -95,22 +91,11 @@ def geocoder(latitude, longitude):
     if response.status_code == 200:
         address = response.json()
 
-        # Извлекаем улицу и номер дома
         street = address.get("address", {}).get("road", "")
         house_number = address.get("address", {}).get("house_number", "")
 
-        # Извлекаем долготу и широту
         latitude = round(float(address.get("lat", 0)), 6)
         longitude = round(float(address.get("lon", 0)), 6)
-
-        if street and house_number:
-            return f"Твое местоположение: {street}, {house_number}. Широта: {latitude}, Долгота: {longitude}"
-        elif street:
-            return f"Улица: {street}. Широта: {latitude}, Долгота: {longitude}"
-        elif house_number:
-            return f"Дом: {house_number}. Широта: {latitude}, Долгота: {longitude}"
-        else:
-            return "Улица и дом не найдены."
     else:
         return "Ошибка при обращении к API."
 
@@ -128,6 +113,13 @@ def find_nearest_shelter(user_coord):
     return nearest_shelter, min_distance
 
 
+def format_address(street, house, body):
+    address = f"{street}, {house}"
+    if body and body != "0":
+        address += f", корпус {body}"
+    return address
+
+
 def run():
     update_id = get_updates()[-1]["update_id"]
     while True:
@@ -143,13 +135,16 @@ def run():
                     longitude = user_location["longitude"]
                     user_coord = (latitude, longitude)
 
-                    # Находим ближайший приют и расстояние до него
                     nearest_shelter, distance = find_nearest_shelter(user_coord)
+
+                    # Формируем адрес
+                    address = format_address(nearest_shelter[4], nearest_shelter[5], nearest_shelter[6])
 
                     # Формируем текстовый ответ
                     response = (
                         f"Ближайший приют: {nearest_shelter[0]}\n"
-                        f"Координаты: {nearest_shelter[1]}, {nearest_shelter[2]}\n"
+                        f"Адрес: {address}\n"
+                        f"Время работы: {nearest_shelter[7]}\n"
                         f"Расстояние до него: {round(distance, 2)} км."
                     )
 
