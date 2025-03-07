@@ -131,13 +131,17 @@ def show_shelter(chat_id, shelter_index):
         f"Расстояние до него: {round(distance, 2)} км."
     )
 
-    # Создаем инлайн-кнопку "Следующий приют"
+    # Создаем inline-кнопки "Собаки" и "Кошки"
+    animal_buttons = [
+        [{"text": "Собаки", "callback_data": f"dogs_{shelter[0]}"}],
+        [{"text": "Кошки", "callback_data": f"cats_{shelter[0]}"}],
+    ]
+
+    # Добавляем кнопку "Следующий приют", если есть еще приюты
     if shelter_index + 1 < len(sorted_shelters):
-        reply_markup = {
-            "inline_keyboard": [[{"text": "Следующий приют", "callback_data": "next_shelter"}]]
-        }
-    else:
-        reply_markup = None
+        animal_buttons.append([{"text": "Следующий приют", "callback_data": "next_shelter"}])
+
+    reply_markup = {"inline_keyboard": animal_buttons}
 
     # Отправляем изображение приюта
     if shelter[3]:  # Проверяем, есть ли путь к изображению
@@ -200,7 +204,9 @@ def run():
                 elif "callback_query" in message:
                     callback_query = message["callback_query"]
                     chat_id = callback_query["message"]["chat"]["id"]
-                    if callback_query["data"] == "next_shelter":
+                    data = callback_query["data"]
+
+                    if data == "next_shelter":
                         if chat_id in user_state:
                             next_shelter_index = user_state[chat_id]["current_index"] + 1
                             if next_shelter_index < len(user_state[chat_id]["sorted_shelters"]):
@@ -210,6 +216,48 @@ def run():
                                 send_message(chat_id, "Это был последний приют в списке.")
                         else:
                             send_message(chat_id, "Сначала отправьте свою геопозицию.")
+
+                    elif data.startswith("dogs_") or data.startswith("cats_"):
+                        shelter_name = data.split("_")[1]
+                        animal_type = "dog" if data.startswith("dogs_") else "cat"
+
+                        # Получаем данные о животных из базы данных
+                        mydb = mysql.connector.connect(
+                            host="localhost", user="root", password="January27!", database="shelters_spb"
+                        )
+                        mycursor = mydb.cursor()
+                        mycursor.execute(
+                            """
+                            SELECT a.name, a.gender, a.year_of_birth, a.description, a.image_path
+                            FROM animals a
+                            JOIN shelters s ON a.shelter_animal_id = s.shelter_id
+                            JOIN types t ON a.type_animal_id = t.type_id
+                            WHERE s.title = %s AND t.type = %s
+                            """,
+                            (shelter_name, "собака" if animal_type == "dog" else "кот")
+                        )
+                        animals = mycursor.fetchall()
+                        mycursor.close()
+                        mydb.close()
+
+                        # Отправляем данные о животных
+                        if animals:
+                            for animal in animals:
+                                name, gender, year_of_birth, description, image_path = animal
+                                message = (
+                                    f"Имя: {name}\n"
+                                    f"Пол: {gender}\n"
+                                    f"Год рождения: {year_of_birth}\n"
+                                    f"Описание: {description}"
+                                )
+
+                                # Отправляем фото и текст
+                                try:
+                                    send_photo(chat_id, image_path, caption=message)
+                                except FileNotFoundError:
+                                    send_message(chat_id, "Изображение не найдено.")
+                        else:
+                            send_message(chat_id, "Животные не найдены.")
 
 
 if __name__ == "__main__":
