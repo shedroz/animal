@@ -28,9 +28,23 @@ list_shelters = [(name, lon, lat, image_path, street, house, body, work_time) fo
 mycursor.close()
 mydb.close()
 
+def load_bad_words(file_path):
+    with open(file_path, "r", encoding="utf-8") as file:
+        return [line.strip().lower() for line in file if line.strip()]
+
+# Загрузка списка нецензурных слов
+bad_words = load_bad_words("words.txt")
+
+def contains_bad_words(text, bad_words):
+    text_lower = text.lower()
+    for word in bad_words:
+        if word in text_lower:
+            return True
+    return False
+
+
 # Словарь для хранения состояния пользователей
 user_state = {}
-
 
 def distance_calculation(start_coord):
     list_dist = []
@@ -131,10 +145,12 @@ def show_shelter(chat_id, shelter_index):
         f"Расстояние до него: {round(distance, 2)} км."
     )
 
-    # Создаем inline-кнопки "Собаки" и "Кошки"
+    # Создаем inline-кнопки "Собаки", "Кошки", "Добавить отзыв", "Посмотреть отзывы"
     animal_buttons = [
         [{"text": "Собаки", "callback_data": f"dogs_{shelter[0]}"}],
         [{"text": "Кошки", "callback_data": f"cats_{shelter[0]}"}],
+        [{"text": "Добавить отзыв", "callback_data": f"add_review_{shelter[0]}"}],
+        [{"text": "Посмотреть отзывы", "callback_data": f"view_reviews_{shelter[0]}_0"}],  # 0 - начальный offset
     ]
 
     # Добавляем кнопку "Следующий приют", если есть еще приюты
@@ -175,7 +191,40 @@ def run():
                 if "message" in message and "text" in message["message"]:
                     chat_id = message["message"]["chat"]["id"]
                     user_message = message["message"]["text"]
-                    check_message(chat_id, user_message)
+
+                    if chat_id in user_state and user_state[chat_id].get("awaiting_review"):
+                        # Пользователь отправляет отзыв
+                        if contains_bad_words(user_message, bad_words):
+                            # Найдено нецензурное слово
+                            send_message(chat_id, "Вы ввели нецензурное слово, исправьте:")
+                        else:
+                            # Отзыв корректен, сохраняем его
+                            review_text = user_message
+                            shelter_name = user_state[chat_id]["shelter_name"]
+
+                            # Получаем shelter_id по названию приюта
+                            mydb = mysql.connector.connect(
+                                host="localhost", user="root", password="January27!", database="shelters_spb"
+                            )
+                            mycursor = mydb.cursor()
+                            mycursor.execute("SELECT shelter_id FROM shelters WHERE title = %s", (shelter_name,))
+                            shelter_id = mycursor.fetchone()[0]
+
+                            # Сохраняем отзыв в базу данных
+                            mycursor.execute(
+                                "INSERT INTO reviews (review, shelter_review_id) VALUES (%s, %s)",
+                                (review_text, shelter_id)
+                            )
+                            mydb.commit()
+                            mycursor.close()
+                            mydb.close()
+
+                            # Сбрасываем состояние
+                            user_state[chat_id]["awaiting_review"] = False
+                            send_message(chat_id, "Спасибо за ваш отзыв!")
+                    else:
+                        # Обработка других текстовых сообщений
+                        check_message(chat_id, user_message)
 
                 # Обработка геопозиции
                 elif "message" in message and "location" in message["message"]:
@@ -193,7 +242,7 @@ def run():
                     # Сохраняем состояние пользователя
                     user_state[chat_id] = {
                         "sorted_shelters": sorted_shelters,
-                        "current_index": 0,
+                        "current_index": 0,  # Инициализируем current_index
                         "user_coord": user_coord,
                     }
 
@@ -207,7 +256,7 @@ def run():
                     data = callback_query["data"]
 
                     if data == "next_shelter":
-                        if chat_id in user_state:
+                        if chat_id in user_state and "current_index" in user_state[chat_id]:
                             next_shelter_index = user_state[chat_id]["current_index"] + 1
                             if next_shelter_index < len(user_state[chat_id]["sorted_shelters"]):
                                 user_state[chat_id]["current_index"] = next_shelter_index
@@ -258,6 +307,61 @@ def run():
                                     send_message(chat_id, "Изображение не найдено.")
                         else:
                             send_message(chat_id, "Животные не найдены.")
+
+                    elif data.startswith("add_review_"):
+                        shelter_name = data.split("_")[2]
+                        if chat_id in user_state and user_state[chat_id].get("awaiting_review"):
+                            # Пользователь уже вводит отзыв
+                            send_message(chat_id, "Вы уже вводите отзыв. Пожалуйста, завершите ввод.")
+                        else:
+                            # Начинаем ввод отзыва
+                            user_state[chat_id] = {
+                                **user_state.get(chat_id, {}),  # Сохраняем текущее состояние
+                                "shelter_name": shelter_name,
+                                "awaiting_review": True,
+                            }
+                            send_message(chat_id, "Напишите ваш отзыв о приюте:")
+
+                    elif data.startswith("view_reviews_"):
+                        shelter_name = data.split("_")[2]
+                        offset = int(data.split("_")[3])
+
+                        # Получаем shelter_id по названию приюта
+                        mydb = mysql.connector.connect(
+                            host="localhost", user="root", password="January27!", database="shelters_spb"
+                        )
+                        mycursor = mydb.cursor()
+                        mycursor.execute("SELECT shelter_id FROM shelters WHERE title = %s", (shelter_name,))
+                        shelter_id = mycursor.fetchone()[0]
+
+                        # Получаем отзывы с пагинацией
+                        mycursor.execute(
+                            "SELECT review FROM reviews WHERE shelter_review_id = %s LIMIT 5 OFFSET %s",
+                            (shelter_id, offset)
+                        )
+                        reviews = mycursor.fetchall()
+                        mycursor.close()
+                        mydb.close()
+
+                        # Отправляем отзывы
+                        if reviews:
+                            response = "Отзывы о приюте:\n\n"
+                            for i, review in enumerate(reviews, 1):
+                                response += f"{i}. {review[0]}\n\n"
+
+                            # Добавляем кнопку "Показать следующие 5 отзывов", если есть еще отзывы
+                            if len(reviews) == 5:
+                                reply_markup = {
+                                    "inline_keyboard": [
+                                        [{"text": "Показать следующие 5 отзывов", "callback_data": f"view_reviews_{shelter_name}_{offset + 5}"}]
+                                    ]
+                                }
+                            else:
+                                reply_markup = None
+
+                            send_message(chat_id, response, reply_markup=reply_markup)
+                        else:
+                            send_message(chat_id, "Отзывов пока нет.")
 
 
 if __name__ == "__main__":
