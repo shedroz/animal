@@ -326,6 +326,8 @@ def run():
                             sorted_shelters = user_state[chat_id]["sorted_shelters"]
                             shelter_index = next((i for i, shelter in enumerate(sorted_shelters) if shelter[0] == shelter_name), None)
                             if shelter_index is not None:
+                                # Обновляем текущий индекс приюта
+                                user_state[chat_id]["current_index"] = shelter_index
                                 show_shelter(chat_id, shelter_index)
                             else:
                                 send_message(chat_id, "Приют не найден😿")
