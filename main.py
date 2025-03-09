@@ -73,7 +73,7 @@ def get_updates(offset=0):
 def reply_keyboard(chat_id, text):
     reply_markup = {
         "keyboard": [
-            [{"request_location": True, "text": "Моя геопозиция"}],
+            [{"request_location": True, "text": "Моя геопозиция📍"}]
         ],
         "resize_keyboard": True,
         "one_time_keyboard": True,
@@ -99,7 +99,7 @@ def check_message(chat_id, message):
         )
         send_message(chat_id, welcome_message)
     else:
-        send_message(chat_id, "Я не понимаю тебя :(")
+        send_message(chat_id, "Я не понимаю тебя 😿")
 
 
 def geocoder(latitude, longitude):
@@ -119,7 +119,7 @@ def geocoder(latitude, longitude):
         latitude = round(float(address.get("lat", 0)), 6)
         longitude = round(float(address.get("lon", 0)), 6)
     else:
-        return "Ошибка при обращении к API."
+        return "Ошибка при обращении к API.😿"
 
 
 def format_address(street, house, body):
@@ -139,23 +139,23 @@ def show_shelter(chat_id, shelter_index):
 
     # Формируем текстовый ответ
     response = (
-        f"Приют: {shelter[0]}\n"
-        f"Адрес: {address}\n"
-        f"Время работы: {shelter[7]}\n"
-        f"Расстояние до него: {round(distance, 2)} км."
+        f"Приют🏠: {shelter[0]}\n"
+        f"Адрес📍: {address}\n"
+        f"Время работы🕰: {shelter[7]}\n"
+        f"Расстояние до него👣: {round(distance, 2)} км."
     )
 
     # Создаем inline-кнопки "Собаки", "Кошки", "Добавить отзыв", "Посмотреть отзывы"
     animal_buttons = [
-        [{"text": "Собаки", "callback_data": f"dogs_{shelter[0]}"}],
-        [{"text": "Кошки", "callback_data": f"cats_{shelter[0]}"}],
-        [{"text": "Добавить отзыв", "callback_data": f"add_review_{shelter[0]}"}],
-        [{"text": "Посмотреть отзывы", "callback_data": f"view_reviews_{shelter[0]}_0"}],  # 0 - начальный offset
+         [{"text": "Собаки🐶", "callback_data": f"dogs_{shelter[0]}"}],
+        [{"text": "Кошки🐱", "callback_data": f"cats_{shelter[0]}"}],
+        [{"text": "Добавить отзыв✍️", "callback_data": f"add_review_{shelter[0]}"}],
+        [{"text": "Посмотреть отзывы👀", "callback_data": f"view_reviews_{shelter[0]}_0"}],  # 0 - начальный offset
     ]
 
     # Добавляем кнопку "Следующий приют", если есть еще приюты
     if shelter_index + 1 < len(sorted_shelters):
-        animal_buttons.append([{"text": "Следующий приют", "callback_data": "next_shelter"}])
+        animal_buttons.append([{"text": "Следующий приют🐾", "callback_data": "next_shelter"}])
 
     reply_markup = {"inline_keyboard": animal_buttons}
 
@@ -171,7 +171,7 @@ def show_shelter(chat_id, shelter_index):
         except FileNotFoundError:
             send_message(
                 chat_id,
-                "Изображение приюта не найдено.",
+                "Изображение приюта не найдено😿",
                 reply_markup=reply_markup,
             )
     else:
@@ -264,7 +264,7 @@ def run():
                             else:
                                 send_message(chat_id, "Это был последний приют в списке.")
                         else:
-                            send_message(chat_id, "Сначала отправьте свою геопозицию.")
+                            send_message(chat_id, "Сначала отправьте свою геопозицию📍")
 
                     elif data.startswith("dogs_") or data.startswith("cats_"):
                         shelter_name = data.split("_")[1]
@@ -291,7 +291,7 @@ def run():
 
                         # Отправляем данные о животных
                         if animals:
-                            for animal in animals:
+                            for i, animal in enumerate(animals):
                                 name, gender, year_of_birth, description, image_path = animal
                                 message = (
                                     f"Имя: {name}\n"
@@ -300,13 +300,37 @@ def run():
                                     f"Описание: {description}"
                                 )
 
+                                # Если это последнее животное, добавляем кнопку "Вернуться к информации о приюте"
+                                if i == len(animals) - 1:
+                                    reply_markup = {
+                                        "inline_keyboard": [
+                                            [{"text": "Вернуться к информации о приюте", "callback_data": f"back_to_shelter_{shelter_name}"}]
+                                        ]
+                                    }
+                                else:
+                                    reply_markup = None
+
                                 # Отправляем фото и текст
                                 try:
-                                    send_photo(chat_id, image_path, caption=message)
+                                    send_photo(chat_id, image_path, caption=message, reply_markup=reply_markup)
                                 except FileNotFoundError:
-                                    send_message(chat_id, "Изображение не найдено.")
+                                    send_message(chat_id, "Изображение не найдено😿", reply_markup=reply_markup)
                         else:
-                            send_message(chat_id, "Животные не найдены.")
+                            send_message(chat_id, "Животные не найдены😿")
+
+                    # Обработка нажатия на кнопку "Вернуться к информации о приюте"
+                    elif data.startswith("back_to_shelter_"):
+                        shelter_name = data.split("_")[3]
+                        if chat_id in user_state and "sorted_shelters" in user_state[chat_id]:
+                            # Находим индекс приюта в списке
+                            sorted_shelters = user_state[chat_id]["sorted_shelters"]
+                            shelter_index = next((i for i, shelter in enumerate(sorted_shelters) if shelter[0] == shelter_name), None)
+                            if shelter_index is not None:
+                                show_shelter(chat_id, shelter_index)
+                            else:
+                                send_message(chat_id, "Приют не найден😿")
+                        else:
+                            send_message(chat_id, "Сначала отправьте свою геопозицию📍")
 
                     elif data.startswith("add_review_"):
                         shelter_name = data.split("_")[2]
